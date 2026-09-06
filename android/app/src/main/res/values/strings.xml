@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">YAM TRANS</string>
+    <string name="title_activity_main">YAM TRANS</string>
+    <string name="package_name">com.abzora.transfertpos</string>
+    <string name="custom_url_scheme">com.abzora.transfertpos</string>
+</resources>
