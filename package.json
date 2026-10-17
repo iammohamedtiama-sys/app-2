@@ -7,14 +7,73 @@
     "dev": "vite",
     "build": "vite build",
     "android:add": "npx cap add android",
-    "android:sync": "npx cap sync android"
+    "android:sync": "npx cap sync android",
+    "desktop:start": "npm run build && electron .",
+    "desktop:windows": "npm run build && electron-builder --win portable --x64 --publish never && node desktop/build-installer.cjs",
+    "desktop:test": "node --test tests/desktop.test.cjs tests/transport-model.test.js"
   },
   "dependencies": {
     "@capacitor/android": "8.4.2",
     "@capacitor/cli": "8.4.2",
     "@capacitor/core": "8.4.2",
     "jspdf": "4.2.1",
+    "jsqr": "1.4.0",
     "qrcode": "1.5.4",
     "vite": "8.1.5"
+  },
+  "devDependencies": {
+    "electron": "44.8.0",
+    "electron-builder": "26.15.3"
+  },
+  "main": "desktop/main.cjs",
+  "description": "Yam-Trans — billets, bagages et courrier",
+  "author": "Yam-Trans",
+  "build": {
+    "appId": "com.yamtrans.desktop",
+    "productName": "YAM TRANS",
+    "directories": {
+      "output": "release-windows",
+      "buildResources": "desktop"
+    },
+    "files": [
+      "dist/**/*",
+      "desktop/*.cjs",
+      "desktop/icon.png",
+      "package.json"
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "desktop/icon.ico",
+      "artifactName": "YamTrans-${version}-Windows-${arch}.${ext}",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "YAM TRANS",
+      "deleteAppDataOnUninstall": false,
+      "installerLanguages": [
+        "fr_FR"
+      ],
+      "displayLanguageSelector": false,
+      "runAfterFinish": true,
+      "artifactName": "YamTrans-${version}-Windows-Installation.exe"
+    },
+    "portable": {
+      "artifactName": "YamTrans-${version}-Windows-Portable.exe",
+      "requestExecutionLevel": "user"
+    }
   }
 }
