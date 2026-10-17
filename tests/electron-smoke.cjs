@@ -1,0 +1,51 @@
+/* Run after npm run build. Requires a sibling server checkout and its Python dependencies. */
+const path=require('node:path'),os=require('node:os'),fs=require('node:fs'),assert=require('node:assert/strict');
+const {spawn,execFileSync}=require('node:child_process');
+const {_electron}=require(path.join(process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES||'playwright','playwright').replace(/playwright\/playwright$/,'playwright'));
+const root=path.resolve(__dirname,'..'),serverRoot=process.env.YAMTRANS_TEST_SERVER||path.resolve(root,'../server');
+const python=process.env.YAMTRANS_TEST_PYTHON||'python3',tmp=fs.mkdtempSync(path.join(os.tmpdir(),'yamtrans-48-'));
+let server,application;
+const base='http://127.0.0.1:8778',env={...process.env,DATABASE_URL:'sqlite:///'+path.join(tmp,'test.db'),TOKEN_SECRET:'local-test-only',PUBLIC_BASE_URL:base};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function request(pathname,body,token){const r=await fetch(base+pathname,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json();assert.ok(r.ok,JSON.stringify(d));return d}
+(async()=>{
+ execFileSync(python,['-c',`from app import main as m\nwith m.SessionLocal() as db:\n c=db.scalar(m.select(m.Company).where(m.Company.code=='YAMTRANS'));c.settings={**c.settings,'modules':{'courier':True,'baggage':True,'tickets':True}};db.commit()`],{cwd:serverRoot,env});
+ server=spawn(python,['-m','uvicorn','app.main:app','--host','127.0.0.1','--port','8778'],{cwd:serverRoot,env,stdio:'ignore'});
+ let ready=false;for(let i=0;i<100;i++){try{if((await fetch(base+'/health')).ok){ready=true;break}}catch{}await sleep(100)}assert.ok(ready,'Local test server did not start');
+ const login=await request('/api/v2/auth/login',{company:'YAMTRANS',username:'admin',password:'admin123'});
+ const departure=new Date(Date.now()+86400000).toISOString();
+ const entities={ticket_buses:[{id:'bus',name:'Bus test',registration:'BF-E2E',seats:[{label:'A1',class:'Simple'},{label:'A2',class:'VIP'}]}],ticket_routes:[{id:'route',origin:'Ouaga',destination:'Bobo',fareSimple:5000,fareVip:7000,fareChildSimple:2500,fareChildVip:4000}],ticket_trips:[{id:'trip',routeId:'route',busId:'bus',origin:'Ouaga',destination:'Bobo',departureAt:departure,status:'Publié',fareSimple:5000,fareVip:7000}]};
+ await request('/api/v2/sync',{deviceId:'e2e',entities},login.token);
+ application=await _electron.launch({executablePath:require('electron'),args:['--no-sandbox','--ozone-platform=headless',path.join(__dirname,'electron-smoke-bootstrap.cjs')],env:{...process.env,YAMTRANS_USER_DATA:path.join(tmp,'profile')},timeout:30000});
+ const page=await application.firstWindow();page.setDefaultTimeout(20000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.waitForLoadState('domcontentloaded');
+ await page.evaluate(({login,base,entities})=>{localStorage.clear();localStorage.setItem('yamtransServerUrl',base);for(const [k,v] of Object.entries({currentCompany:login.company,currentCompanyId:login.company.id,currentUser:login.user,authToken:login.token,activeModule:'tickets'}))localStorage.setItem(k,JSON.stringify(v));const key=k=>'yamtrans:'+login.company.id+':'+k;localStorage.setItem(key('users'),JSON.stringify(login.users));localStorage.setItem(key('settings'),JSON.stringify({syncEnabled:true,syncAuto:false,autoPrint:false}));for(const [k,v] of Object.entries({ticketBuses:entities.ticket_buses,ticketRoutes:entities.ticket_routes,ticketTrips:entities.ticket_trips}))localStorage.setItem(key(k),JSON.stringify(v));},{login,base,entities});
+ await page.reload();await page.locator('[data-page=ticketSale]').first().click();
+ await page.locator('#saleTrip').selectOption('trip');await page.locator('[data-seat=A1]').click();
+ await page.waitForFunction(()=>document.querySelector('#ticketFare')?.value==='5000');
+ assert.equal(await page.locator('#saleBoardingPoint').isVisible(),false);
+ await page.waitForFunction(()=>{const el=document.querySelector('.seat.selected');return el&&getComputedStyle(el).backgroundColor==='rgb(220, 38, 38)'});
+ await page.locator('#passengerCategory').selectOption('child');assert.equal(await page.locator('#ticketFare').inputValue(),'2500');
+ assert.equal(await page.locator('#ticketSaleForm .wizard-controls').count(),0);
+ assert.equal(await page.locator('#ticketFare').getAttribute('readonly'),'');
+ await application.evaluate(({ipcMain})=>{ipcMain.removeHandler('yam:print-html');ipcMain.handle('yam:print-html',()=>({success:true}))});
+ await page.locator('#ticketCustomerPhone').fill('70000001');await page.locator('#ticketPassengerName').fill('Client test');await page.locator('#ticketSaleForm [name=paid]').fill('2500');
+ await page.locator('#ticketSaleForm button.submit').click();
+ await page.waitForFunction(()=>{const c=JSON.parse(localStorage.getItem('currentCompanyId'));return JSON.parse(localStorage.getItem('yamtrans:'+c+':tickets')||'[]').length===1});
+ const synced=await request('/api/v2/sync',{deviceId:'e2e',entities:{}},login.token);assert.equal(synced.entities.tickets.length,1);assert.equal(synced.entities.tickets[0].fare,2500);
+ // Simulate a lost reply after the server has already committed the second sale.
+ await page.locator('[data-page=ticketSale]').first().click();await page.locator('#saleTrip').selectOption('trip');await page.locator('[data-seat=A2]').click();await page.waitForFunction(()=>document.querySelector('#ticketFare')?.value==='7000');
+ await page.locator('#ticketCustomerPhone').fill('70000002');await page.locator('#ticketPassengerName').fill('Réponse perdue');await page.locator('#ticketSaleForm [name=paid]').fill('7000');
+ await page.route('**/api/v2/transport/tickets/confirm',async route=>{const reply=await route.fetch();assert.equal(reply.status(),200);await route.abort('failed')},{times:1});
+ await page.locator('#ticketSaleForm button.submit').click();await page.waitForFunction(()=>document.querySelector('#ytToastHost')?.textContent.includes('Emission du billet impossible'));
+ await page.reload();await page.locator('[data-page=ticketSale]').first().click();await page.getByRole('button',{name:'Vérifier l’émission interrompue'}).click();
+ await page.waitForFunction(()=>{const u=JSON.parse(localStorage.getItem('currentUser')),c=JSON.parse(localStorage.getItem('currentCompanyId'));return !JSON.parse(localStorage.getItem('yamtrans:'+c+':pending-ticket-'+u.id)||'null')});
+ const recovered=await request('/api/v2/sync',{deviceId:'e2e',entities:{}},login.token);assert.equal(recovered.entities.tickets.length,2);assert.equal(recovered.entities.tickets.reduce((sum,t)=>sum+t.paid,0),9500);
+ await page.keyboard.press('Escape');await page.locator('#closeTicketModal').click().catch(()=>{});
+ await page.locator('[data-page=ticketPilotage]').first().click();await page.locator('[data-ops-tab=parking]').click();
+ for(const [name,value] of Object.entries({registration:'BF-UI-1',customerName:'Client test',phone:'70000001',condition:'Bon état',rate:'500'}))await page.locator('#opsPark [name='+name+']').fill(value);
+ await page.locator('#opsPark [type=submit]').click();await page.waitForSelector('[data-ops-release]');
+ for(const tab of ['tracking','packs','identity','fleet','analysis','board']){await page.locator('[data-ops-tab='+tab+']').click();assert.equal(await page.locator('[data-ops-tab='+tab+'].primary').count(),1)}
+ await page.locator('[data-ops-tab=analysis]').click();await page.locator('#opsAnalysis [type=submit]').click();await page.getByRole('heading',{name:'Résultat par départ'}).waitFor();
+ assert.deepEqual(errors,[]);console.log('UI_SMOKE_OK: child sale, recovery after lost response, server confirmation, red seat, direct boarding, parking, seven tabs, analytics');
+})().catch(async e=>{console.error(e);if(application){try{const page=await application.firstWindow();console.error((await page.locator('#ytToastHost').innerText()).slice(0,2500));console.error(await page.evaluate(()=>({selected:document.querySelector('.seat.selected')?.outerHTML,color:document.querySelector('.seat.selected')?getComputedStyle(document.querySelector('.seat.selected')).backgroundColor:null,css:[...document.styleSheets].map(s=>({href:s.href,rules:[...s.cssRules].filter(r=>r.selectorText?.includes('seat.selected')).map(r=>r.cssText)}))})))}catch{}}process.exitCode=1}).finally(async()=>{if(application)await application.close();server?.kill();fs.rmSync(tmp,{recursive:true,force:true})});

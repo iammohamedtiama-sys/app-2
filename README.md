@@ -1,6 +1,10 @@
-# Transfert POS v2
+# YamTrans 4.8.0
 
-Application Android/Capacitor de gestion des transferts Abidjan ↔ Ouagadougou.
+Application de gestion de transport : Tickets, Bagages, Courrier et exploitation. Client Web, Android/Capacitor et Windows/Electron.
+
+- [Fonctions et mise en service 4.8](OPERATIONS-4.8.md)
+- [Installation et compilation Windows](WINDOWS.md)
+- [Contrôles de validation](VALIDATION-4.8.md)
 
 ## Comptes de démonstration
 
