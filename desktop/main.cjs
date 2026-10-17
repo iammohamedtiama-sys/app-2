@@ -15,11 +15,12 @@ function handle(channel, fn) {
 }
 async function printHtml(payload={}) {
   if(typeof payload.html!=='string'||payload.html.length>15*1024*1024)throw new Error('Document d’impression invalide');
-  const win=new BrowserWindow({show:false,webPreferences:{sandbox:true,nodeIntegration:false,contextIsolation:true,javascript:false,partition:'yam-print'}});
+  const win=new BrowserWindow({show:false,webPreferences:{sandbox:true,nodeIntegration:false,contextIsolation:true,partition:'yam-print'}});
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
-  win.webContents.session.webRequest.onBeforeRequest((details,callback)=>callback({cancel:!details.url.startsWith('data:')&&!details.url.startsWith(APP_URL)}));
   try {
-    await win.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(payload.html));
+    const base='<meta http-equiv="Content-Security-Policy" content="script-src \'none\'; object-src \'none\'; frame-src \'none\'; connect-src \'none\'; form-action \'none\'"><base href="'+APP_URL+'">';
+    const html=/<head(?:\s[^>]*)?>/i.test(payload.html)?payload.html.replace(/<head(?:\s[^>]*)?>/i,head=>head+base):base+payload.html;
+    await win.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(html));
     if(payload.title)win.setTitle(String(payload.title).slice(0,180));
     const options={silent:Boolean(payload.deviceName),printBackground:true,deviceName:String(payload.deviceName||''),usePrinterDefaultPageSize:false};
     if(payload.paperWidth){
@@ -47,12 +48,14 @@ else {
   app.whenReady().then(async()=>{
     app.setAppUserModelId('com.yamtrans.desktop');
     const root=path.resolve(__dirname,'../dist');
-    protocol.handle('yamtrans',request=>{
+    const serveAsset=request=>{
       const url=new URL(request.url);if(url.hostname!=='app')return new Response('Not found',{status:404});
       let relative;try{relative=decodeURIComponent(url.pathname).replace(/^\/+/, '')||'index.html';}catch{return new Response('Bad request',{status:400});}
       const file=path.resolve(root,relative);if(file!==root&&!file.startsWith(root+path.sep))return new Response('Forbidden',{status:403});
       return net.fetch(pathToFileURL(file).href);
-    });
+    };
+    protocol.handle('yamtrans',serveAsset);
+    session.fromPartition('yam-print').protocol.handle('yamtrans',serveAsset);
     session.defaultSession.setPermissionRequestHandler((contents,permission,callback)=>{
       if(!trusted(contents.getURL())||permission!=='media')return callback(false);
       dialog.showMessageBox(mainWindow,{type:'question',buttons:['Autoriser','Refuser'],defaultId:0,cancelId:1,title:'Caméra Yam-Trans',message:'Autoriser la caméra pour scanner les QR codes et photographier les bagages ?'}).then(({response})=>callback(response===0)).catch(()=>callback(false));
