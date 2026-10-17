@@ -13,11 +13,11 @@ async function request(pathname,body,token){const r=await fetch(base+pathname,{m
  server=spawn(python,['-m','uvicorn','app.main:app','--host','127.0.0.1','--port','8778'],{cwd:serverRoot,env,stdio:'ignore'});
  let ready=false;for(let i=0;i<100;i++){try{if((await fetch(base+'/health')).ok){ready=true;break}}catch{}await sleep(100)}assert.ok(ready,'Local test server did not start');
  const login=await request('/api/v2/auth/login',{company:'YAMTRANS',username:'admin',password:'admin123'});
- const departure=new Date(Date.now()+86400000).toISOString();
+ const departure=new Date(Date.now()+1800000).toISOString();
  const entities={ticket_buses:[{id:'bus',name:'Bus test',registration:'BF-E2E',seats:[{label:'A1',class:'Simple'},{label:'A2',class:'VIP'}]}],ticket_routes:[{id:'route',origin:'Ouaga',destination:'Bobo',fareSimple:5000,fareVip:7000,fareChildSimple:2500,fareChildVip:4000}],ticket_trips:[{id:'trip',routeId:'route',busId:'bus',origin:'Ouaga',destination:'Bobo',departureAt:departure,status:'Publié',fareSimple:5000,fareVip:7000}]};
  await request('/api/v2/sync',{deviceId:'e2e',entities},login.token);
  application=await _electron.launch({executablePath:require('electron'),args:['--no-sandbox','--ozone-platform=headless',path.join(__dirname,'electron-smoke-bootstrap.cjs')],env:{...process.env,YAMTRANS_USER_DATA:path.join(tmp,'profile')},timeout:30000});
- const page=await application.firstWindow();page.setDefaultTimeout(20000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const page=await application.firstWindow();page.setDefaultTimeout(20000);const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.log('PAGE_ERROR',e.message)});page.on('response',async r=>{if(r.url().endsWith('/api/v2/sync')){const d=await r.json().catch(()=>({}));if(d.conflicts?.length)console.log('SYNC_CONFLICTS',JSON.stringify(d.conflicts));}});
  await page.waitForLoadState('domcontentloaded');
  await page.evaluate(({login,base,entities})=>{localStorage.clear();localStorage.setItem('yamtransServerUrl',base);for(const [k,v] of Object.entries({currentCompany:login.company,currentCompanyId:login.company.id,currentUser:login.user,authToken:login.token,activeModule:'tickets'}))localStorage.setItem(k,JSON.stringify(v));const key=k=>'yamtrans:'+login.company.id+':'+k;localStorage.setItem(key('users'),JSON.stringify(login.users));localStorage.setItem(key('settings'),JSON.stringify({syncEnabled:true,syncAuto:false,autoPrint:false}));for(const [k,v] of Object.entries({ticketBuses:entities.ticket_buses,ticketRoutes:entities.ticket_routes,ticketTrips:entities.ticket_trips}))localStorage.setItem(key(k),JSON.stringify(v));},{login,base,entities});
  await page.reload();await page.locator('[data-page=ticketSale]').first().click();
@@ -30,9 +30,13 @@ async function request(pathname,body,token){const r=await fetch(base+pathname,{m
  assert.equal(await page.locator('#ticketFare').getAttribute('readonly'),'');
  await application.evaluate(({ipcMain})=>{ipcMain.removeHandler('yam:print-html');ipcMain.handle('yam:print-html',()=>({success:true}))});
  await page.locator('#ticketCustomerPhone').fill('70000001');await page.locator('#ticketPassengerName').fill('Client test');await page.locator('#ticketSaleForm [name=paid]').fill('2500');
+ await page.route('**/api/v2/operations/documents/ocr',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({text:'CNIB B12345',candidates:['B12345']})}));
+ await page.locator('#saleIdentityPhoto').setInputFiles({name:'cnib.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAADwAAAAoCAIAAAAt2Q6oAAAAR0lEQVR4nO3OQQ0AIRAAseP8e1488BhC0irompnvNf/twAnpinRFuiJdka5IV6Qr0hXpinRFuiJdka5IV6Qr0hXpinRFurIBCe0DTR7xkQEAAAAASUVORK5CYII=','base64')});
+ await page.getByRole('button',{name:'B12345',exact:true}).click();await page.locator('#saleIdentityConfirmed').check();
  await page.locator('#ticketSaleForm button.submit').click();
  await page.waitForFunction(()=>{const c=JSON.parse(localStorage.getItem('currentCompanyId'));return JSON.parse(localStorage.getItem('yamtrans:'+c+':tickets')||'[]').length===1});
  const synced=await request('/api/v2/sync',{deviceId:'e2e',entities:{}},login.token);assert.equal(synced.entities.tickets.length,1);assert.equal(synced.entities.tickets[0].fare,2500);
+ await page.waitForFunction(()=>document.querySelector('#ytToastHost')?.textContent.includes('émis · siège'));
  // Simulate a lost reply after the server has already committed the second sale.
  await page.locator('[data-page=ticketSale]').first().click();await page.locator('#saleTrip').selectOption('trip');await page.locator('[data-seat=A2]').click();await page.waitForFunction(()=>document.querySelector('#ticketFare')?.value==='7000');
  await page.locator('#ticketCustomerPhone').fill('70000002');await page.locator('#ticketPassengerName').fill('Réponse perdue');await page.locator('#ticketSaleForm [name=paid]').fill('7000');
@@ -42,10 +46,22 @@ async function request(pathname,body,token){const r=await fetch(base+pathname,{m
  await page.waitForFunction(()=>{const u=JSON.parse(localStorage.getItem('currentUser')),c=JSON.parse(localStorage.getItem('currentCompanyId'));return !JSON.parse(localStorage.getItem('yamtrans:'+c+':pending-ticket-'+u.id)||'null')});
  const recovered=await request('/api/v2/sync',{deviceId:'e2e',entities:{}},login.token);assert.equal(recovered.entities.tickets.length,2);assert.equal(recovered.entities.tickets.reduce((sum,t)=>sum+t.paid,0),9500);
  await page.keyboard.press('Escape');await page.locator('#closeTicketModal').click().catch(()=>{});
+ await page.locator('[data-page=ticketBoarding]').first().click();await page.locator('#boardingTrip').selectOption('trip');
+ await page.locator('#boardingIdentity [name=number]').fill('B12345');await page.locator('#boardingIdentity [type=submit]').click();
+ await page.getByRole('button',{name:'Pièce contrôlée · valider l’embarquement'}).click();
+ await page.waitForFunction(()=>document.querySelector('#boardingIdentity [role=status]')?.textContent.includes('embarquement confirmé'));
+ const boarded=await request('/api/v2/operations/documents/lookup?number=B12345',undefined,login.token);assert.equal(boarded.tickets[0].boarded,true);assert.ok(boarded.photo.startsWith('data:image/jpeg'));
+ const created=await request('/api/v2/admin/users',{name:'Compte à modifier',username:'modifytest',password:'before123',role:'agency',agency:'Ouaga',modules:{courier:true,baggage:true,tickets:true,ticketRoles:['sales']}},login.token);
+ await page.locator('[data-page=admin]').first().click();await page.locator('[data-settings-section=users]').click();await page.locator('#refreshCompanyUsers').click();
+ await page.locator('[data-edit-company-user="'+created.id+'"]').waitFor();await page.locator('[data-edit-company-user="'+created.id+'"]').click();
+ await page.locator('#companyUserEditForm [name=name]').fill('Compte modifié');await page.locator('#companyUserEditForm [name=newPassword]').fill('after123');
+ await page.locator('#companyUserEditForm [name=editTicketRoles][value=boarding]').check();await page.locator('#companyUserEditForm button.primary').click();
+ await page.waitForFunction(()=>!document.querySelector('#companyUserEditForm'));
+ const modified=await request('/api/v2/auth/login',{company:'YAMTRANS',username:'modifytest',password:'after123'});assert.equal(modified.user.name,'Compte modifié');assert.ok(modified.user.modules.ticketRoles.includes('boarding'));
  await page.locator('[data-page=ticketPilotage]').first().click();await page.locator('[data-ops-tab=parking]').click();
  for(const [name,value] of Object.entries({registration:'BF-UI-1',customerName:'Client test',phone:'70000001',condition:'Bon état',rate:'500'}))await page.locator('#opsPark [name='+name+']').fill(value);
  await page.locator('#opsPark [type=submit]').click();await page.waitForSelector('[data-ops-release]');
  for(const tab of ['tracking','packs','identity','fleet','analysis','board']){await page.locator('[data-ops-tab='+tab+']').click();assert.equal(await page.locator('[data-ops-tab='+tab+'].primary').count(),1)}
  await page.locator('[data-ops-tab=analysis]').click();await page.locator('#opsAnalysis [type=submit]').click();await page.getByRole('heading',{name:'Résultat par départ'}).waitFor();
- assert.deepEqual(errors,[]);console.log('UI_SMOKE_OK: child sale, recovery after lost response, server confirmation, red seat, direct boarding, parking, seven tabs, analytics');
-})().catch(async e=>{console.error(e);if(application){try{const page=await application.firstWindow();console.error((await page.locator('#ytToastHost').innerText()).slice(0,2500));console.error(await page.evaluate(()=>({selected:document.querySelector('.seat.selected')?.outerHTML,color:document.querySelector('.seat.selected')?getComputedStyle(document.querySelector('.seat.selected')).backgroundColor:null,css:[...document.styleSheets].map(s=>({href:s.href,rules:[...s.cssRules].filter(r=>r.selectorText?.includes('seat.selected')).map(r=>r.cssText)}))})))}catch{}}process.exitCode=1}).finally(async()=>{if(application)await application.close();server?.kill();fs.rmSync(tmp,{recursive:true,force:true})});
+ assert.deepEqual(errors,[]);console.log('UI_SMOKE_OK: CNIB photo at sale, document boarding, real account/password/role editing, child sale, recovery after lost response, server confirmation, red seat, direct boarding, parking, seven tabs, analytics');
+})().catch(async e=>{console.error(e);if(application){try{const page=await application.firstWindow();console.error(await page.evaluate(()=>({body:document.body.innerText.slice(-5000),buttons:[...document.querySelectorAll('[data-edit-company-user]')].map(x=>({id:x.dataset.editCompanyUser,hidden:x.closest('[hidden]')?.outerHTML.slice(0,200)}))})));console.error((await page.locator('#ytToastHost').innerText()).slice(0,2500));console.error(await page.locator('#saleIdentityStatus').textContent({timeout:1000}).catch(()=>''));console.error(await page.evaluate(()=>({selected:document.querySelector('.seat.selected')?.outerHTML,color:document.querySelector('.seat.selected')?getComputedStyle(document.querySelector('.seat.selected')).backgroundColor:null,css:[...document.styleSheets].map(s=>({href:s.href,rules:[...s.cssRules].filter(r=>r.selectorText?.includes('seat.selected')).map(r=>r.cssText)}))})))}catch{}}process.exitCode=1}).finally(async()=>{if(application)await application.close();server?.kill();fs.rmSync(tmp,{recursive:true,force:true})});
