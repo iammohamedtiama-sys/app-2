@@ -1,6 +1,6 @@
 {
   "name": "transfert-pos",
-  "version": "4.8.1",
+  "version": "4.8.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,8 +10,9 @@
     "android:sync": "npx cap sync android",
     "desktop:start": "npm run build && electron .",
     "desktop:windows": "npm run build && electron-builder --win --x64 --dir --publish never && node desktop/cleanup-build.cjs && electron-builder --win portable --x64 --prepackaged release-windows/win-unpacked --publish never && node desktop/build-installer.cjs",
-    "desktop:test": "node --test tests/desktop.test.cjs tests/transport-model.test.js",
-    "desktop:smoke": "npm run build && node tests/electron-smoke.cjs"
+    "desktop:test": "node --test tests/desktop.test.cjs tests/transport-model.test.js tests/identity-text.test.js",
+    "desktop:smoke": "npm run build && node tests/electron-smoke.cjs",
+    "android:debug": "npm run build && cap sync android && node scripts/build-android.cjs"
   },
   "dependencies": {
     "@capacitor/android": "8.4.2",

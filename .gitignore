@@ -8,3 +8,7 @@ android/build/
 .DS_Store
 
 release-windows/
+android/local.properties
+android/capacitor-cordova-android-plugins/build/
+*.keystore
+*.jks

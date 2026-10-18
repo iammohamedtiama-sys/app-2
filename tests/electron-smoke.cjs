@@ -27,13 +27,13 @@ async function request(pathname,body,token){const r=await fetch(base+pathname,{m
  await page.waitForFunction(()=>{const el=document.querySelector('.seat.selected');return el&&getComputedStyle(el).backgroundColor==='rgb(220, 38, 38)'});
  await page.locator('#passengerCategory').selectOption('child');assert.equal(await page.locator('#ticketFare').inputValue(),'2500');
  assert.equal(await page.locator('#ticketSaleForm .wizard-controls').count(),0);
- assert.equal(await page.locator('#ticketFare').getAttribute('readonly'),'');
+ assert.equal(await page.locator('#ticketFare').getAttribute('type'),'hidden');assert.equal(await page.locator('#ticketDiscount').count(),0);assert.ok((await page.locator('#ticketFareDisplay').innerText()).includes('2'));assert.equal(await page.locator('#ticketSaleForm [name=paid]').inputValue(),'2500');
  await application.evaluate(({ipcMain})=>{ipcMain.removeHandler('yam:print-html');ipcMain.handle('yam:print-html',()=>({success:true}))});
  await page.locator('#ticketCustomerPhone').fill('70000001');await page.locator('#ticketPassengerName').fill('Client test');await page.locator('#ticketSaleForm [name=paid]').fill('2500');
  await page.route('**/api/v2/operations/documents/ocr',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({text:'CNIB B12345',candidates:['B12345']})}));
  await page.locator('#saleIdentityPhoto').setInputFiles({name:'cnib.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAADwAAAAoCAIAAAAt2Q6oAAAAR0lEQVR4nO3OQQ0AIRAAseP8e1488BhC0irompnvNf/twAnpinRFuiJdka5IV6Qr0hXpinRFuiJdka5IV6Qr0hXpinRFurIBCe0DTR7xkQEAAAAASUVORK5CYII=','base64')});
- await page.getByRole('button',{name:'B12345',exact:true}).click();await page.locator('#saleIdentityConfirmed').check();
- await page.locator('#ticketSaleForm button.submit').click();
+ await page.waitForFunction(()=>document.querySelector('#ticketSaleForm [name=documentNumber]')?.value==='B12345');await page.locator('#saleIdentityConfirmed').check();await page.evaluate(()=>{document.querySelector('#ticketFare').value='1'});
+ await page.locator('#ticketSaleForm [name=paid]').fill('2500');await page.locator('#ticketSaleForm button.submit').click();
  await page.waitForFunction(()=>{const c=JSON.parse(localStorage.getItem('currentCompanyId'));return JSON.parse(localStorage.getItem('yamtrans:'+c+':tickets')||'[]').length===1});
  const synced=await request('/api/v2/sync',{deviceId:'e2e',entities:{}},login.token);assert.equal(synced.entities.tickets.length,1);assert.equal(synced.entities.tickets[0].fare,2500);
  await page.waitForFunction(()=>document.querySelector('#ytToastHost')?.textContent.includes('émis · siège'));
@@ -63,5 +63,24 @@ async function request(pathname,body,token){const r=await fetch(base+pathname,{m
  await page.locator('#opsPark [type=submit]').click();await page.waitForSelector('[data-ops-release]');
  for(const tab of ['tracking','packs','identity','fleet','analysis','board']){await page.locator('[data-ops-tab='+tab+']').click();assert.equal(await page.locator('[data-ops-tab='+tab+'].primary').count(),1)}
  await page.locator('[data-ops-tab=analysis]').click();await page.locator('#opsAnalysis [type=submit]').click();await page.getByRole('heading',{name:'Résultat par départ'}).waitFor();
+ // A normal agency user stays the same account when opening any dashboard.
+ const agencyLogin=await request('/api/v2/auth/login',{company:'YAMTRANS',username:'modifytest',password:'after123'});
+ await page.evaluate(({login})=>{for(const [k,v]of Object.entries({currentUser:login.user,authToken:login.token,currentCompany:login.company,currentCompanyId:login.company.id}))localStorage.setItem(k,JSON.stringify(v));sessionStorage.setItem('yamtransPlatformSession',JSON.stringify({token:'stale-platform-session',user:{role:'platform_admin'}}));},{login:agencyLogin});
+ await page.reload();
+ for(const route of ['dashboard','baggageDashboard','ticketDashboard']){await page.locator('[data-page='+route+']').first().click();const actual=await page.evaluate(()=>JSON.parse(localStorage.getItem('currentUser')));assert.equal(actual.id,agencyLogin.user.id);assert.equal(actual.role,'agency');assert.equal(await page.locator('#returnPlatform').count(),0);}
+ assert.equal(await page.locator('[data-page=admin]').count(),0);
+ // Seed the offline cache through the real login form, then retain an unrelated admin token.
+ await page.locator('#headerLogout').click();
+ await page.locator('#loginForm [name=company]').fill('YAMTRANS');await page.locator('#loginForm [name=username]').fill('modifytest');await page.locator('#loginForm [name=password]').fill('after123');await page.locator('#loginForm button[type=submit]').click();
+ await page.waitForFunction(()=>JSON.parse(localStorage.getItem('yamtrans:offline-auth:YAMTRANS:modifytest')||'null')?.token);
+ const offlineToken=await page.evaluate(()=>JSON.parse(localStorage.getItem('yamtrans:offline-auth:YAMTRANS:modifytest')).token);
+ await page.locator('#headerLogout').click();await page.evaluate(token=>localStorage.setItem('authToken',JSON.stringify(token)),login.token);
+ await page.context().setOffline(true);
+ await page.locator('#loginForm [name=company]').fill('YAMTRANS');await page.locator('#loginForm [name=username]').fill('modifytest');await page.locator('#loginForm [name=password]').fill('after123');await page.locator('#loginForm button[type=submit]').click();
+ await page.locator('[data-page=dashboard]').first().waitFor();
+ assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('authToken'))),offlineToken);assert.equal(await page.locator('#returnPlatform').count(),0);
+ await page.locator('[data-page=dashboard]').first().click();assert.equal((await page.evaluate(()=>JSON.parse(localStorage.getItem('currentUser')))).role,'agency');
+ await page.context().setOffline(false);
+
  assert.deepEqual(errors,[]);console.log('UI_SMOKE_OK: CNIB photo at sale, document boarding, real account/password/role editing, child sale, recovery after lost response, server confirmation, red seat, direct boarding, parking, seven tabs, analytics');
 })().catch(async e=>{console.error(e);if(application){try{const page=await application.firstWindow();console.error(await page.evaluate(()=>({body:document.body.innerText.slice(-5000),buttons:[...document.querySelectorAll('[data-edit-company-user]')].map(x=>({id:x.dataset.editCompanyUser,hidden:x.closest('[hidden]')?.outerHTML.slice(0,200)}))})));console.error((await page.locator('#ytToastHost').innerText()).slice(0,2500));console.error(await page.locator('#saleIdentityStatus').textContent({timeout:1000}).catch(()=>''));console.error(await page.evaluate(()=>({selected:document.querySelector('.seat.selected')?.outerHTML,color:document.querySelector('.seat.selected')?getComputedStyle(document.querySelector('.seat.selected')).backgroundColor:null,css:[...document.styleSheets].map(s=>({href:s.href,rules:[...s.cssRules].filter(r=>r.selectorText?.includes('seat.selected')).map(r=>r.cssText)}))})))}catch{}}process.exitCode=1}).finally(async()=>{if(application)await application.close();server?.kill();fs.rmSync(tmp,{recursive:true,force:true})});
