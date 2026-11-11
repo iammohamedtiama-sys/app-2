@@ -60,7 +60,7 @@ public class IdentityScannerPlugin extends Plugin {
             intent.putExtra(MediaStore.EXTRA_OUTPUT,uri);intent.setClipData(ClipData.newRawUri("Pièce",uri));
             intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_READ_URI_PERMISSION);
             busy=true;startActivityForResult(call,intent,"imageResult");
-        } catch(Exception e){busy=false;deleteCameraFile(call);call.reject("Impossible d’ouvrir l’appareil photo. Vous pouvez importer une image.","CAMERA_UNAVAILABLE");}
+        } catch(Exception e){busy=false;deleteCameraFile(call);call.reject("Impossible d’ouvrir l’appareil photo. Vérifiez son autorisation puis réessayez.","CAMERA_UNAVAILABLE");}
     }
     @PluginMethod public void choosePhoto(PluginCall call) {
         if(busy){call.reject("Une lecture de pièce est déjà en cours.","BUSY");return;}

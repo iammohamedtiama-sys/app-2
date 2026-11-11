@@ -1,6 +1,6 @@
 {
   "name": "transfert-pos",
-  "version": "4.9.0",
+  "version": "4.10.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,12 +13,15 @@
     "desktop:test": "node --test tests/desktop.test.cjs tests/transport-model.test.js tests/identity-text.test.js",
     "desktop:smoke": "npm run build && node tests/electron-smoke.cjs",
     "android:debug": "npm run build && cap sync android && node scripts/build-android.cjs",
-    "extensions:test": "node tests/extensions-dom.cjs"
+    "extensions:test": "node tests/extensions-dom.cjs",
+    "mobile:test": "node --test tests/mobile-ui.test.cjs",
+    "mobile:browser": "node tests/mobile-browser.cjs"
   },
   "dependencies": {
     "@capacitor/android": "8.4.2",
     "@capacitor/cli": "8.4.2",
     "@capacitor/core": "8.4.2",
+    "@capacitor/geolocation": "8.2.4",
     "jspdf": "4.2.1",
     "jsqr": "1.4.0",
     "qrcode": "1.5.4",
@@ -27,10 +30,11 @@
   "devDependencies": {
     "electron": "44.8.0",
     "electron-builder": "26.15.3",
-    "jsdom": "31.0.0"
+    "jsdom": "31.0.0",
+    "playwright": "1.65.0"
   },
   "main": "desktop/main.cjs",
-  "description": "Yam-Trans \u2014 billets, bagages et courrier",
+  "description": "Yam-Trans — billets, bagages et courrier",
   "author": "Yam-Trans",
   "build": {
     "appId": "com.yamtrans.desktop",

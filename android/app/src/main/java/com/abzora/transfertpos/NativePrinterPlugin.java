@@ -56,6 +56,13 @@ import java.util.UUID;
         }
 )
 public class NativePrinterPlugin extends Plugin {
+    @PluginMethod
+    public void tapFeedback(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            getActivity().getWindow().getDecorView().performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP);
+            call.resolve();
+        });
+    }
     private static final UUID SPP_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
     private static BluetoothSocket cachedSocket;
     private static OutputStream cachedOutput;

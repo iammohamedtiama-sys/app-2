@@ -3,6 +3,8 @@ const fs=require('fs'),assert=require('node:assert/strict'),{spawn}=require('chi
 const {JSDOM}=require('jsdom');
 const root=require('node:path').resolve(__dirname,'..');
 const child=spawn(process.env.YAMTRANS_TEST_PYTHON||'python3',[require('node:path').join(__dirname,'extensions-bridge.py')]);child.stderr.on('data',d=>process.stderr.write(d));let serial=0;const pending=new Map();
+child.on('error',e=>{console.error(e);process.exitCode=1;});
+child.on('exit',code=>{if(pending.size){console.error('API de test interrompue avant la réponse, code '+code);process.exitCode=1;}});
 readline.createInterface({input:child.stdout}).on('line',line=>{const r=JSON.parse(line),p=pending.get(r.id);if(p){pending.delete(r.id);p(r);}});
 function api(path,body,token,method=body===undefined?'GET':'POST'){const id=++serial;return new Promise(resolve=>{pending.set(id,resolve);child.stdin.write(JSON.stringify({id,path,body,method,headers:token?{Authorization:'Bearer '+token}:{}})+'\n');});}
 const wait=async predicate=>{for(let i=0;i<150;i++){if(predicate())return;await new Promise(r=>setTimeout(r,20));}throw Error('UI wait timed out');};
