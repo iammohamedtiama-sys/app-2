@@ -47,11 +47,11 @@ test('vente : photo caméra, numéro B lu, confirmation obligatoire et aucune ga
  document.querySelector('#saleIdentityClear').click();assert.equal(ui.saleDocument(),null);
 });
 test('embarquement : photo passeport A, recherche automatique puis contrôle manuel',async()=>{
- dom('<select id="boardingTrip"><option value="trip">Voyage</option></select><section id="boardingIdentity"><label><input type="file" id="boardingIdentityPhoto"></label><img hidden><div id="boardingIdentityCandidates"></div><form><input name="number"><button type="submit">Rechercher</button></form><p role="status"></p><div id="boardingIdentityResults"></div></section>');
+ dom('<button id="scanTicketQr">Scanner</button><select id="boardingTrip"><option value="trip">Voyage</option></select><section id="boardingIdentity"><label><input type="file" id="boardingIdentityPhoto"></label><img hidden><div id="boardingIdentityCandidates"></div><form><input name="number"><button type="submit">Rechercher</button></form><p role="status"></p><div id="boardingIdentityResults"></div></section>');
  const {createIdentityTicketUi}=await import('../src/identity-ticket-ui.js');let boardings=0;
  const ticket={id:'ticket',tripId:'trip',passengerName:'Client',origin:'Ouaga',destination:'Bobo',seat:'1',pnr:'PNR1',departureAt:new Date().toISOString(),balance:0};
  const ui=createIdentityTicketUi({state:{company:{id:'one'},user:{id:'agent'},page:'ticketBoarding'},esc:x=>String(x||''),notify(){},render(){},api:async path=>path.includes('/ocr')?{text:'PASSEPORT\nN° A12345678'}:{customerName:'Client',photo:PHOTO,tickets:[ticket]},boardTicket:async(id,tripId,number)=>{assert.equal(number,'A12345678');boardings++;return {ticket:{...ticket,boarded:true},alreadyBoarded:false};}});ui.bind();
- assert.equal(document.querySelector('input[type=file]'),null);document.querySelector('#boardingNativeCamera').click();await wait(()=>document.querySelector('[data-camera-shoot]')?.disabled===false);document.querySelector('[data-camera-shoot]').click();
+ assert.equal(document.querySelector('input[type=file]'),null);document.querySelector('#scanTicketQr').click();await wait(()=>document.querySelector('[data-camera-shoot]')?.disabled===false);document.querySelector('[data-camera-shoot]').click();
  await wait(()=>document.querySelector('#boardingIdentityResults .primary'));assert.equal(boardings,0);assert.equal(document.querySelector('[name=number]').value,'A12345678');document.querySelector('#boardingIdentityResults .primary').click();await wait(()=>boardings===1);assert.ok(document.querySelector('#boardingIdentityResults .primary').disabled);
 });
 test('OCR : un préfixe contraire au type de pièce n’est pas proposé',async()=>{
@@ -66,4 +66,22 @@ test('la position web utilise la position réelle et traduit un refus',async()=>
 });
 test('arrêter le suivi web arrête le watch et ignore les callbacks tardifs',async()=>{
  dom();let callback,cleared,received=0;Object.defineProperty(navigator,'geolocation',{value:{watchPosition(fn){callback=fn;return 7;},clearWatch(id){cleared=id;}},configurable:true});const {watchLocation}=await import('../src/location.js');const watcher=watchLocation(()=>received++,()=>{});callback({coords:{latitude:12}});watcher.stop();callback({coords:{latitude:13}});assert.equal(cleared,7);assert.equal(received,1);
+});
+test('la même caméra lit réellement un QR et libère son flux',async()=>{
+ const d=dom(),QR=require('qrcode'),matrix=QR.create('YAM-BOARDING-TEST').modules;
+ d.window.HTMLCanvasElement.prototype.getContext=function(){const width=this.width,height=this.height;return {drawImage(){},getImageData(){const data=new Uint8ClampedArray(width*height*4),scale=8,side=(matrix.size+8)*scale,left=Math.floor((width-side)/2),top=Math.floor((height-side)/2);data.fill(255);for(let y=0;y<height;y++)for(let x=0;x<width;x++){const a=Math.floor((x-left)/scale)-4,b=Math.floor((y-top)/scale)-4;if(a>=0&&a<matrix.size&&b>=0&&b<matrix.size&&matrix.get(b,a)){const i=(y*width+x)*4;data[i]=data[i+1]=data[i+2]=0;}}return {data};}};};
+ const {captureCameraPhoto}=await import('../src/camera-capture.js'),r=await captureCameraPhoto({scanQr:true});assert.deepEqual(r,{type:'qr',value:'YAM-BOARDING-TEST'});assert.equal(d.stopped(),1);assert.equal(document.querySelector('video'),null);
+});
+test('la photo de vente est la première étape et remplit le nom et la pièce',async()=>{
+ const d=dom('<form id="ticketSaleForm"><section><b>Voyage</b><label>Pièce<input name="documentNumber"></label></section><input name="passengerName"><input name="phone"></form>');
+ const {createIdentityTicketUi}=await import('../src/identity-ticket-ui.js');const ui=createIdentityTicketUi({state:{company:{id:'one'},user:{id:'agent'},page:'ticketSale'},esc:x=>x,notify(){},api:async()=>({text:'CNIB\nN° B12345678\nNom TRAORE\nPrénoms AMADOU\nExpiration 12/03/2030'})});ui.bind();
+ assert.ok(document.querySelector('#ticketSaleForm').firstElementChild.classList.contains('identity-sale-card'));
+ document.querySelector('#saleNativeCamera').click();await wait(()=>!document.querySelector('[data-camera-shoot]')?.disabled);document.querySelector('[data-camera-shoot]').click();await wait(()=>document.querySelector('[name=passengerName]').value==='AMADOU TRAORE');assert.equal(document.querySelector('[name=documentExpiresOn]').value,'2030-03-12');assert.equal(document.querySelector('[name=documentNumber]').value,'B12345678');assert.equal(document.querySelector('[name=phone]').value,'');
+});
+test('les fonctions chauffeur et convoyeur ont des matrices distinctes',async()=>{
+ const d=dom('<form id="userForm"><div class="grid"></div><input type="checkbox" name="moduleTickets"><input type="checkbox" name="moduleCourier"><input type="checkbox" name="moduleBaggage"><button>Créer</button></form>');
+ const {enhancePermissions,readUserModules,canAction}=await import('../src/permissions-ui.js');enhancePermissions({state:{user:{id:'admin',role:'company_admin'},users:[]},esc:x=>x,notify(){}});
+ const f=document.querySelector('form');f.elements.operationalProfile.value='conductor';f.elements.operationalProfile.dispatchEvent(new d.window.Event('change'));
+ const mods=readUserModules(f,{});assert.equal(mods.permissions['tickets.sell'],true);assert.equal(mods.permissions['payroll.pay'],false);assert.equal(canAction({user:{role:'agency',modules:mods}},'tickets.sell'),true);
+ f.elements.operationalProfile.value='driver';f.elements.operationalProfile.dispatchEvent(new window.Event('change'));assert.equal(readUserModules(f,{}).permissions['tickets.sell'],false);
 });

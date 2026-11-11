@@ -25,3 +25,7 @@ test('un jeton d’un autre compte ou d’une autre société ne peut pas servir
  assert.equal(sessionMatches(token({uid:'agent',cid:'other'}),user,company),false);
  assert.equal(sessionMatches('invalid',user,company),false);
 });
+test('passeport MRZ : nom et expiration sont proposés avec le numéro A',()=>{
+ const r=parseIdentityText('P<BFATRAORE<<AMADOU<<<<<<<<<<<<<<<<<<<<<<<<<\nA123456789BFA0203250M3003120<<<<<<<<<<<<<<04');
+ assert.equal(r.primaryNumber,'A12345678');assert.equal(r.customerName,'AMADOU TRAORE');assert.equal(r.expiresOn,'2030-03-12');
+});
