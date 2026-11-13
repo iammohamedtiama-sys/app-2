@@ -21,7 +21,7 @@ async function noOverflow(label){const size=await page.evaluate(()=>({screen:inn
  const departure=new Date(Date.now()+30*60000).toISOString(),seats=[];
  for(let i=1;i<=12;i++)seats.push({id:'V'+i,label:'V'+i,class:'VIP',row:Math.ceil(i/3),col:((i-1)%3)+1});
  for(let i=1;i<=40;i++)seats.push({id:'S'+i,label:String(i),class:'Simple',row:4+Math.ceil(i/4),col:((i-1)%4)+1});
- await api('/api/v2/sync',{deviceId:'browser',entities:{ticket_buses:[{id:'bus',name:'Bus Ouaga Bobo',registration:'BF-MOBILE',seats}],ticket_routes:[{id:'route',origin:'Ouaga',destination:'Bobo',stops:'Boromo',fareSimple:5000,fareVip:7000,fareChildSimple:2500,fareChildVip:4000}],ticket_trips:[{id:'trip',routeId:'route',busId:'bus',origin:'Ouaga',destination:'Bobo',stops:'Boromo',departureAt:departure,status:'Publié',fareSimple:5000,fareVip:7000}]}},login.token);
+ const initial=await api('/api/v2/sync',{deviceId:'browser',entities:{ticket_buses:[{id:'bus',name:'Bus Ouaga Bobo',registration:'BF-MOBILE',seats}],ticket_routes:[{id:'route',origin:'Ouaga',destination:'Bobo',stops:'Boromo',fareSimple:5000,fareVip:7000,fareChildSimple:2500,fareChildVip:4000}],ticket_trips:[{id:'trip',routeId:'route',busId:'bus',origin:'Ouaga',destination:'Bobo',stops:'Boromo',departureAt:departure,status:'Publié',fareSimple:5000,fareVip:7000}]}},login.token);
  let launch={headless:true,args:['--no-sandbox','--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']};
  if(process.env.YAMTRANS_CHROMIUM_MODULE){const {default:chr}=await import(process.env.YAMTRANS_CHROMIUM_MODULE);launch={...launch,executablePath:await chr.executablePath(),args:[...chr.args,...launch.args]};}
  else if(process.env.CHROMIUM_PATH)launch.executablePath=process.env.CHROMIUM_PATH;
@@ -32,15 +32,26 @@ async function noOverflow(label){const size=await page.evaluate(()=>({screen:inn
  await page.goto(base+'/app/');await page.locator('#loginForm [name=company]').fill('YAMTRANS');await page.locator('#loginForm [name=username]').fill('admin');await page.locator('#loginForm [name=password]').fill('admin123');await page.locator('#loginForm [type=submit]').click();
  await page.locator('#mobileFullMenu').waitFor();await navigate('ticketSale');
  assert.ok((await page.locator('.mobile-nav').innerText()).includes('Vendre'));
+ // A real optimistic-lock conflict must retain both versions without blocking a different seat.
+ const oldTrip=initial.entities.ticket_trips.find(t=>t.id==='trip');
+ await api('/api/v2/sync',{deviceId:'other-counter',entities:{ticket_trips:[{...oldTrip,notes:'Version autre guichet'}]}},login.token);
+ await page.evaluate(old=>{const cid=JSON.parse(localStorage.getItem('currentCompanyId'));localStorage.setItem('yamtrans:'+cid+':ticketTrips',JSON.stringify([{...old,notes:'Modification locale à conserver'}]));},oldTrip);
+ await page.reload();await page.locator('#syncReview').waitFor();await page.locator('#syncReview').click();
+ await page.getByRole('dialog',{name:'Saisies à vérifier'}).waitFor();
+ assert.ok((await page.locator('.sync-review-dialog').innerText()).includes('Les autres ventes peuvent continuer'));
+ assert.ok((await page.locator('.sync-review-dialog pre').first().textContent()).includes('Modification locale à conserver'));
+ await page.locator('[data-sync-close]').click();await navigate('ticketSale');
+
  for(const width of [320,360,390,430,768,1280]){
-  await page.setViewportSize({width,height:900});await noOverflow('sale '+width);
+  await page.setViewportSize({width,height:900});await noOverflow('sale '+width);const title=await page.locator('.workspace>header h1').boundingBox(),buttons=await page.locator('.header-badges').boundingBox();assert.ok(title.x+title.width<=buttons.x+1,'header title overlaps controls '+width);
  }
  await page.setViewportSize({width:390,height:844});await page.locator('#saleTrip').selectOption('trip');await page.locator('#openMobileSeats').click();await page.locator('[data-seat="1"]').click();await page.waitForFunction(()=>document.querySelector('#selectedSeat')?.value==='1');await page.locator('.seat-sheet-open').waitFor({state:'detached'});
  await page.locator('#ticketCustomerPhone').fill('70000001');await page.locator('#ticketPassengerName').fill('Client mobile');await page.locator('#ticketSaleForm [name=paid]').fill('1000');
  assert.equal(await page.locator('#ticketSaleForm input[type=file]').count(),0);
- await page.route('**/api/v2/operations/documents/ocr',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({text:'CNIB\nN° B12345678\nNom CLIENT\nPrénoms MOBILE'})}));
+ await page.route('**/api/v2/operations/documents/ocr',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({text:'CNIB\nN° B12345678\nNom CLIENT\nPrénoms MOBILE\nNaissance 25/03/2002'})}));
  await page.locator('#saleNativeCamera').tap();await page.locator('[data-camera-shoot]:not([disabled])').waitFor();await noOverflow('camera');
  await page.locator('[data-camera-shoot]').tap();await page.waitForFunction(()=>document.querySelector('#ticketSaleForm [name=documentNumber]')?.value==='B12345678');
+ assert.equal(await page.locator('[name=passengerBirthDate]').inputValue(),'2002-03-25');assert.equal(await page.locator('[name=documentExpiresOn]').count(),0);
  await page.locator('#saleIdentityConfirmed').check();
  if(process.env.YAMTRANS_SCREENSHOT_DIR){fs.mkdirSync(process.env.YAMTRANS_SCREENSHOT_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.YAMTRANS_SCREENSHOT_DIR,'mobile-sale.png'),fullPage:true});}
  await page.locator('#ticketSaleForm button.submit').tap();await page.waitForFunction(()=>{const cid=JSON.parse(localStorage.getItem('currentCompanyId'));return JSON.parse(localStorage.getItem('yamtrans:'+cid+':tickets')||'[]').length===1;});
@@ -75,5 +86,5 @@ async function noOverflow(label){const size=await page.evaluate(()=>({screen:inn
  await api('/api/v2/gps/positions',{id:'speed-1',tripId:'trip',recordedAt:new Date().toISOString(),latitude:12.3,longitude:-1.5,speedKph:120,accuracy:5},gps.token);
  await new Promise(resolve=>setTimeout(resolve,11000));
  await api('/api/v2/gps/positions',{id:'speed-2',tripId:'trip',recordedAt:new Date().toISOString(),latitude:12.3,longitude:-1.5,speedKph:125,accuracy:5},gps.token);
- await navigate('managementInsights');await page.getByText('Priorités à examiner',{exact:true}).waitFor();await noOverflow('management-insights');await page.getByText('Dépassement de vitesse GPS à vérifier',{exact:true}).waitFor();await navigate('staffManagement');await page.locator('#managementAssign').waitFor();await noOverflow('staff');await navigate('payrollManagement');await page.locator('#managementPayroll').waitFor();await noOverflow('payroll');assert.deepEqual(errors,[]);console.log('MOBILE_BROWSER_OK: widths 320/360/390/430/768/1280, 52 seats, real camera API with test video, CNIB sale, balance payment, document boarding twice, live GPS hardware/phone map, all Tickets pages, conductor permissions, crew assignment, payroll preparation/approval/payment and overspeed alerts');
+ await navigate('managementInsights');await page.getByText('Priorités à examiner',{exact:true}).waitFor();await noOverflow('management-insights');await page.getByText('Dépassement de vitesse GPS à vérifier',{exact:true}).waitFor();await navigate('staffManagement');await page.locator('#managementAssign').waitFor();await noOverflow('staff');await navigate('payrollManagement');await page.locator('#managementPayroll').waitFor();await noOverflow('payroll');assert.deepEqual(errors,[]);console.log('MOBILE_BROWSER_OK: stale conflict archived, subsequent seat sale, DOB autofill, non-overlapping header, widths 320/360/390/430/768/1280, 52 seats, real camera API with test video, CNIB sale, balance payment, document boarding twice, live GPS hardware/phone map, all Tickets pages, conductor permissions, crew assignment, payroll preparation/approval/payment and overspeed alerts');
 })().catch(async error=>{console.error(error);if(page){console.error((await page.locator('body').innerText().catch(()=>'' )).slice(-2600));if(process.env.YAMTRANS_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.YAMTRANS_SCREENSHOT_DIR,'failure.png'),fullPage:true}).catch(()=>{});}process.exitCode=1;}).finally(async()=>{await browser?.close();server?.kill();fs.rmSync(temp,{recursive:true,force:true});});

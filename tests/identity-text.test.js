@@ -28,4 +28,13 @@ test('un jeton d’un autre compte ou d’une autre société ne peut pas servir
 test('passeport MRZ : nom et expiration sont proposés avec le numéro A',()=>{
  const r=parseIdentityText('P<BFATRAORE<<AMADOU<<<<<<<<<<<<<<<<<<<<<<<<<\nA123456789BFA0203250M3003120<<<<<<<<<<<<<<04');
  assert.equal(r.primaryNumber,'A12345678');assert.equal(r.customerName,'AMADOU TRAORE');assert.equal(r.expiresOn,'2030-03-12');
+ assert.equal(r.birthDate,'2002-03-25');
+});
+
+test('naissance : ne confond pas date de naissance et expiration et refuse les dates impossibles',()=>{
+ assert.equal(parseIdentityText('CNIB\nDate de naissance 25/03/2002\nExpiration 12/03/2030').birthDate,'2002-03-25');
+ assert.equal(parseIdentityText('CNIB\nDate de naissance 31/02/2002').birthDate,'');
+ assert.equal(parseIdentityText('CNIB\nDate de naissance 25/03/2099').birthDate,'');
+ assert.equal(parseIdentityText('CNIB\nDate de naissance\n25/03/2002').birthDate,'2002-03-25');
+ assert.equal(parseIdentityText('CNIB\nExpiration 25/03/2030').birthDate,'');
 });
