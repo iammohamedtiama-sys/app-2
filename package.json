@@ -1,6 +1,6 @@
 {
   "name": "transfert-pos",
-  "version": "4.8.2",
+  "version": "4.11.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,12 +12,16 @@
     "desktop:windows": "npm run build && electron-builder --win --x64 --dir --publish never && node desktop/cleanup-build.cjs && electron-builder --win portable --x64 --prepackaged release-windows/win-unpacked --publish never && node desktop/build-installer.cjs",
     "desktop:test": "node --test tests/desktop.test.cjs tests/transport-model.test.js tests/identity-text.test.js",
     "desktop:smoke": "npm run build && node tests/electron-smoke.cjs",
-    "android:debug": "npm run build && cap sync android && node scripts/build-android.cjs"
+    "android:debug": "npm run build && cap sync android && node scripts/build-android.cjs",
+    "extensions:test": "node tests/extensions-dom.cjs",
+    "mobile:test": "node --test tests/mobile-ui.test.cjs",
+    "mobile:browser": "node tests/mobile-browser.cjs"
   },
   "dependencies": {
     "@capacitor/android": "8.4.2",
     "@capacitor/cli": "8.4.2",
     "@capacitor/core": "8.4.2",
+    "@capacitor/geolocation": "8.2.4",
     "jspdf": "4.2.1",
     "jsqr": "1.4.0",
     "qrcode": "1.5.4",
@@ -25,7 +29,9 @@
   },
   "devDependencies": {
     "electron": "44.8.0",
-    "electron-builder": "26.15.3"
+    "electron-builder": "26.15.3",
+    "jsdom": "31.0.0",
+    "playwright": "1.65.0"
   },
   "main": "desktop/main.cjs",
   "description": "Yam-Trans — billets, bagages et courrier",

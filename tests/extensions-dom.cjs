@@ -1,0 +1,37 @@
+/* DOM interactions against the real Python API over stdio; no browser sockets or production requests. */
+const fs=require('fs'),assert=require('node:assert/strict'),{spawn}=require('child_process'),readline=require('readline');
+const {JSDOM}=require('jsdom');
+const root=require('node:path').resolve(__dirname,'..');
+const child=spawn(process.env.YAMTRANS_TEST_PYTHON||'python3',[require('node:path').join(__dirname,'extensions-bridge.py')]);child.stderr.on('data',d=>process.stderr.write(d));let serial=0;const pending=new Map();
+child.on('error',e=>{console.error(e);process.exitCode=1;});
+child.on('exit',code=>{if(pending.size){console.error('API de test interrompue avant la réponse, code '+code);process.exitCode=1;}});
+readline.createInterface({input:child.stdout}).on('line',line=>{const r=JSON.parse(line),p=pending.get(r.id);if(p){pending.delete(r.id);p(r);}});
+function api(path,body,token,method=body===undefined?'GET':'POST'){const id=++serial;return new Promise(resolve=>{pending.set(id,resolve);child.stdin.write(JSON.stringify({id,path,body,method,headers:token?{Authorization:'Bearer '+token}:{}})+'\n');});}
+const wait=async predicate=>{for(let i=0;i<150;i++){if(predicate())return;await new Promise(r=>setTimeout(r,20));}throw Error('UI wait timed out');};
+(async()=>{
+ const login=(await api('/api/v2/auth/login',{company:'YAMTRANS',username:'admin',password:'admin123'})).body;
+ const departure=new Date(Date.now()+10*86400000).toISOString();
+ await api('/api/v2/sync',{deviceId:'dom-test',entities:{ticket_buses:[{id:'bus',name:'Bus test',registration:'BF-49',seats:[{label:'1',class:'Simple'}]}],ticket_routes:[{id:'route',origin:'Ouaga',destination:'Bobo',fareSimple:5000,fareVip:7000}],ticket_trips:[{id:'trip',busId:'bus',routeId:'route',origin:'Ouaga',destination:'Bobo',departureAt:departure,status:'Publié',fareSimple:5000,fareVip:7000}]}},login.token);
+ const dom=new JSDOM('<main id="app"></main>',{url:'http://localhost/app/'});Object.assign(global,{window:dom.window,document:dom.window.document,FormData:dom.window.FormData});Object.defineProperty(global,'navigator',{value:{onLine:true},configurable:true});
+ global.fetch=async(url,opts={})=>{const r=await api(new URL(url).pathname+new URL(url).search,opts.body?JSON.parse(opts.body):undefined,login.token,opts.method);return {ok:r.status>=200&&r.status<300,status:r.status,json:async()=>r.body};};
+ global.__TestJsPdf=require(root+'/node_modules/jspdf').jsPDF;
+ let source=fs.readFileSync(root+'/src/extensions-ui.js','utf8').replace("import { jsPDF } from 'jspdf';","const jsPDF=globalThis.__TestJsPdf;").replace("import './extensions.css';",'');
+ const {createExtensionsUi}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+ const state={company:login.company,user:login.user,authToken:login.token,page:'ticketExtensions',ticketBuses:[],ticketTrips:[]};const errors=[],files=[];
+ const sync=async()=>{const r=(await api('/api/v2/sync',{deviceId:'dom-test',entities:{}},login.token)).body;state.ticketBuses=r.entities.ticket_buses;state.ticketTrips=r.entities.ticket_trips;return true;};await sync();let ui;
+ const render=()=>{document.getElementById('app').innerHTML=ui.panel();ui.bind();};
+ ui=createExtensionsUi({state,shell:x=>x,esc:s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c])),money:n=>String(n)+' FCFA',uid:()=>crypto.randomUUID(),ticketRole:()=>true,notify:(message,type)=>{if(type==='error')errors.push(message);},render,serverUrl:()=> 'http://localhost',sync,operationsApi:async(path,body)=>{const r=await api('/api/v2/operations'+path,body,login.token);if(r.status>=400)throw Error(r.body.detail);return r.body;},navigate:()=>{},saveBlob:async(blob,name)=>files.push({blob,name})});
+ render();await wait(()=>document.querySelector('#extSearch'));
+ const click=selector=>{const el=document.querySelector(selector);assert.ok(el,selector);el.click();};const set=(form,values)=>{for(const[k,v]of Object.entries(values)){const el=document.querySelector(form+' [name='+k+']');assert.ok(el,k);el.value=v;}};const submit=selector=>{document.querySelector(selector).dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));};
+ set('#extSearch',{origin:'Ouaga',destination:'Bobo',date:departure.slice(0,10)});submit('#extSearch');await wait(()=>document.querySelector('[data-ext-sell]'));
+ click('[data-ext-tab=stock]');set('#extStockItem',{sku:'FILTER',name:'Filtre huile',minimum:'2'});submit('#extStockItem');await wait(()=>document.querySelector('#extStockMovement [name=itemId] option'));assert.equal(document.querySelector('#extStockItem [name=name]').value,'');
+ set('#extStockMovement',{quantity:'5',unitCost:'1000',reason:'Facture fournisseur'});submit('#extStockMovement');await wait(()=>document.querySelector('.ext-badge')?.textContent.includes('5 pièce'));
+ set('#extStockMovement',{direction:'Sortie',quantity:'3',busId:'bus',reason:'Entretien bus'});submit('#extStockMovement');await wait(()=>document.querySelector('.ext-warn')?.textContent.includes('2 pièce'));click('#extStockCsv');await wait(()=>files.length===1);
+ click('[data-ext-tab=charters]');const startsAt=new Date(Date.parse(departure)+2*86400000).toISOString().slice(0,16),endsAt=new Date(Date.parse(departure)+2*86400000+6*3600000).toISOString().slice(0,16);
+ set('#extCharter',{customerName:'Organisation',phone:'70000001',origin:'Ouaga',destination:'Koudougou',startsAt,endsAt,amount:'100000',deposit:'20000'});submit('#extCharter');await wait(()=>document.querySelector('[data-ext-charter-pay]'));click('[data-ext-charter-pay]');set('#extCharterPayment',{amount:'30000'});submit('#extCharterPayment');await wait(()=>document.querySelector('.ext-row')?.textContent.includes('Payé 50000'));click('[data-ext-charter-receipt]');await wait(()=>files.length===2);
+ click('[data-ext-tab=parking]');set('#extSlot',{label:'A1',rate:'500'});submit('#extSlot');await wait(()=>document.querySelector('#extParking [name=slotId] option'));set('#extParking',{registration:'BF-49',customerName:'Client',phone:'70000002',condition:'Bon état'});submit('#extParking');await wait(()=>document.querySelector('.ext-slots .occupied'));click('[data-ext-parking-receipt]');await wait(()=>files.length===3);
+ click('[data-ext-tab=schedule]');const next=new Date(Date.parse(departure)+86400000);set('#extSchedule',{start:next.toISOString().slice(0,10),end:next.toISOString().slice(0,10)});document.querySelector('#extSchedule [name=weekdays][value="'+((next.getUTCDay()+6)%7)+'"]').checked=true;submit('#extSchedule');await wait(()=>document.body.textContent.includes('1 départ(s) · 240 minutes'));
+ click('[data-ext-tab=messages]');document.querySelector('#extPreferences [name=stageNotifications]').checked=true;submit('#extPreferences');await wait(()=>!document.querySelector('#extPreferences button').disabled);assert.ok(document.querySelector('#extPreferences [name=stageNotifications]').checked);
+ click('[data-ext-tab=backup]');click('#extBackup');await wait(()=>files.length===4);assert.ok(files[3].name.endsWith('.json'));const backup=JSON.parse(await files[3].blob.text());assert.equal(backup.entities.charters[0].paid,50000);
+ assert.deepEqual(errors,[]);console.log('DOM_API_SMOKE_OK: real TestClient API, search, stock purchase/withdrawal, cleared forms, charter instalment, parking, PDF and CSV exports, recurrence, preferences, complete export');
+})().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>child.kill());
