@@ -6,4 +6,4 @@ Le serveur refuse les modifications du bordereau scellé, y compris l’effaceme
 
 Validation : 134 tests serveur et 37 tests JavaScript passent ; build web réussi. Quatre nouveaux tests d’interface exécutent notamment le vrai rendu des bordereaux et le formulaire déjà ouvert. Douze cas serveur couvrent le verrou, les synchronisations, le rattachement et la poursuite du traitement des colis.
 
-Le correctif est préparé dans les deux dépôts, avec les ressources web Android actualisées. Aucun déploiement VPS ni nouvel APK distribué pour ce correctif : ils seront réalisés dans l’étape de mise à jour.
+Le correctif est préparé dans les deux dépôts, avec les ressources web Android actualisées. L’APK de test 4.11.2 intègre ce correctif. Aucun déploiement VPS n’a été effectué ; il reste à réaliser dans l’étape de mise à jour.
