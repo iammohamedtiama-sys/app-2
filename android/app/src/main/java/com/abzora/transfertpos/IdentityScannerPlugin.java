@@ -39,6 +39,20 @@ public class IdentityScannerPlugin extends Plugin {
     private final TextRecognizer reader=TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
     private volatile boolean busy=false;
 
+    @PluginMethod public void readImage(PluginCall call) {
+        if(busy){call.reject("Lecture en cours","BUSY");return;}
+        String image=call.getString("image", "");
+        if(!image.startsWith("data:image/")||image.length()>7000000){call.reject("Photo invalide","IMAGE_INVALID");return;}
+        busy=true;worker.execute(()->{try{
+            byte[] bytes=Base64.decode(image.substring(image.indexOf(',')+1),Base64.DEFAULT);
+            Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length);
+            if(bitmap==null||(long)bitmap.getWidth()*bitmap.getHeight()>12000000L){busy=false;call.reject("Photo invalide","IMAGE_INVALID");return;}
+            reader.process(InputImage.fromBitmap(bitmap,0))
+                .addOnSuccessListener(text->{JSObject out=new JSObject();out.put("text",text.getText());out.put("engine","android-mlkit");call.resolve(out);})
+                .addOnFailureListener(e->call.reject("Lecture impossible","OCR_FAILED"))
+                .addOnCompleteListener(task->{bitmap.recycle();busy=false;});
+        }catch(Exception e){busy=false;call.reject("Photo invalide","IMAGE_INVALID");}});
+    }
     @PluginMethod public void takePhoto(PluginCall call) {
         if(busy){call.reject("Une lecture de pièce est déjà en cours.","BUSY");return;}
         if(getPermissionState("camera")!=PermissionState.GRANTED){busy=true;requestPermissionForAlias("camera",call,"cameraPermission");}
@@ -60,7 +74,7 @@ public class IdentityScannerPlugin extends Plugin {
             intent.putExtra(MediaStore.EXTRA_OUTPUT,uri);intent.setClipData(ClipData.newRawUri("Pièce",uri));
             intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_READ_URI_PERMISSION);
             busy=true;startActivityForResult(call,intent,"imageResult");
-        } catch(Exception e){busy=false;deleteCameraFile(call);call.reject("Impossible d’ouvrir l’appareil photo. Vous pouvez importer une image.","CAMERA_UNAVAILABLE");}
+        } catch(Exception e){busy=false;deleteCameraFile(call);call.reject("Impossible d’ouvrir l’appareil photo. Vérifiez son autorisation puis réessayez.","CAMERA_UNAVAILABLE");}
     }
     @PluginMethod public void choosePhoto(PluginCall call) {
         if(busy){call.reject("Une lecture de pièce est déjà en cours.","BUSY");return;}
