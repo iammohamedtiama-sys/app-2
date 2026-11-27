@@ -1,6 +1,6 @@
 {
   "name": "transfert-pos",
-  "version": "4.11.2",
+  "version": "4.12.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,7 +15,9 @@
     "android:debug": "npm run build && cap sync android && node scripts/build-android.cjs",
     "extensions:test": "node tests/extensions-dom.cjs",
     "mobile:test": "node --test tests/mobile-ui.test.cjs",
-    "mobile:browser": "node tests/mobile-browser.cjs"
+    "mobile:browser": "node tests/mobile-browser.cjs",
+    "passenger:build": "node scripts/build-passenger.cjs",
+    "passenger:test": "node tests/passenger-browser.cjs"
   },
   "dependencies": {
     "@capacitor/android": "8.4.2",
@@ -62,7 +64,8 @@
       ],
       "icon": "desktop/icon.ico",
       "artifactName": "YamTrans-${version}-Windows-${arch}.${ext}",
-      "signExecutable": false
+      "signExecutable": false,
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,

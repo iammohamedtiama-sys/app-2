@@ -33,6 +33,6 @@ test('un conflit antérieur ne bloque pas une nouvelle réservation de siège va
  const {createTransportUi}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
  Object.defineProperty(global,'navigator',{value:{onLine:true},configurable:true});let called=0;
  global.fetch=async(url,req)=>{called++;assert.ok(url.endsWith('/holds'));assert.equal(JSON.parse(req.body).seat,'A2');return {ok:true,json:async()=>({id:'hold'})};};
- const ui=createTransportUi({state:{syncStatus:'conflict',authToken:'token',company:{id:'yam'}},serverUrl:()=>'',sync:async()=>true,deviceId:()=> 'phone',notify(){}});
+ const ui=createTransportUi({state:{syncStatus:'conflict',authToken:'token',company:{id:'yam'},ticketTrips:[{id:'trip',origin:'Ouaga',destination:'Bobo'}]},serverUrl:()=>'',sync:async()=>true,deviceId:()=> 'phone',notify(){}});
  await ui.selectSeat('trip','A2','Ouaga','Bobo');assert.equal(called,1);
 });
